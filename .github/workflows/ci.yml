@@ -60,3 +60,26 @@ jobs:
             --file=app/requirements.txt \
             --package-manager=pip \
             --severity-threshold=high
+
+
+  image-scan:
+    name: Trivy Container Image Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t dwp-app:ci .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: 'dwp-app:ci'
+          scan-type: 'image'
+          scanners: 'vuln'
+          severity: 'HIGH,CRITICAL'
+          format: 'table'
+          exit-code: '1'
