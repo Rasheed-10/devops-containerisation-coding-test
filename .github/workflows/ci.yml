@@ -26,8 +26,7 @@ jobs:
       - name: Run Gitleaks
         run: |
           docker run --rm \
-            --entrypoint gitleaks \
             -v "$PWD:/repo" \
             -w /repo \
             zricethezav/gitleaks:v8.24.3 \
-            git --source=/repo --redact
+            git . --redact
