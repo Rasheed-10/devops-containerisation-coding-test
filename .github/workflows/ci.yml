@@ -1,0 +1,148 @@
+name: Container Security CI
+
+on:
+  push:
+    branches:
+      - feature/container-security-ci
+      - main
+
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  secret-scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            -w /repo \
+            zricethezav/gitleaks:v8.24.3 \
+            git . --redact
+
+  dependency-scan:
+    name: Snyk Python Dependency Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+
+      - name: Set up Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Scan Python dependencies
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk test \
+            --file=app/requirements.txt \
+            --package-manager=pip \
+            --severity-threshold=high
+
+
+  image-scan:
+    name: Trivy Container Image Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t dwp-app:ci .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'dwp-app:ci'
+          scan-type: 'image'
+          scanners: 'vuln'
+          severity: 'HIGH,CRITICAL'
+          format: 'table'
+          exit-code: '1'
+          version: 'v0.75.0'
+
+      - name: Save Docker image
+        if: success() || failure()
+        run: docker save dwp-app:ci -o dwp-app.tar
+
+      - name: Upload Docker image artifact
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dwp-container-image
+          path: dwp-app.tar
+          retention-days: 1
+
+
+  publish-image:
+    name: Publish Assessment Image to GHCR
+    runs-on: ubuntu-latest
+
+    needs:
+      - secret-scan
+      - dependency-scan
+      - image-scan
+
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        needs.secret-scan.result == 'success' &&
+        needs.dependency-scan.result != 'cancelled' &&
+        needs.image-scan.result != 'cancelled'
+      }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dwp-container-image
+
+      - name: Load Docker image
+        run: docker load -i dwp-app.tar
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and publish image
+        run: |
+          docker tag dwp-app:ci ghcr.io/rasheed-10/dwp-app:v1.0.1
+          docker push ghcr.io/rasheed-10/dwp-app:v1.0.1
+
+   
