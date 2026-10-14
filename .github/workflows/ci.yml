@@ -75,7 +75,7 @@ jobs:
           docker build -t dwp-app:ci .
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'dwp-app:ci'
           scan-type: 'image'
