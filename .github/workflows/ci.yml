@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/container-security-ci
+      - main
 
   pull_request:
     branches:
@@ -11,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   secret-scan:
@@ -83,4 +85,55 @@ jobs:
           severity: 'HIGH,CRITICAL'
           format: 'table'
           exit-code: '1'
-          trivy-version: 'v0.75.0'
+          version: 'v0.75.0'
+
+      - name: Save Docker image
+        if: success()
+        run: docker save dwp-app:ci -o dwp-app.tar
+
+      - name: Upload Docker image artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dwp-container-image
+          path: dwp-app.tar
+          retention-days: 1
+
+
+  publish-image:
+    name: Publish Image to GHCR
+    runs-on: ubuntu-latest
+
+    needs:
+      - secret-scan
+      - dependency-scan
+      - image-scan
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dwp-container-image
+
+      - name: Load Docker image
+        run: docker load -i dwp-app.tar
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and publish image
+        run: |
+          docker tag dwp-app:ci ghcr.io/rasheed-10/dwp-app:v1.0.1
+          docker push ghcr.io/rasheed-10/dwp-app:v1.0.1
+
+   
